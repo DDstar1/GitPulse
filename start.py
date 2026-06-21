@@ -292,7 +292,9 @@ def main() -> None:
     ensure_port_available(PORT)
 
     domain = ensure_certs()
+    print()
     print(f"🚀 GitPulse running at https://{domain}:{PORT}")
+    print()
 
     if os.environ.get(MANAGED_ENV_VAR):
         # Already running inside the systemd service we installed; just serve.
