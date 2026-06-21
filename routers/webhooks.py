@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import subprocess
 from datetime import datetime
 from typing import Optional
@@ -107,8 +108,16 @@ async def receive_webhook(slug: str, token: str, request: Request):
             session.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=signature_error)
 
+        content_type = request.headers.get("content-type", "")
         try:
-            payload = await request.json()
+            if "application/json" in content_type:
+                payload = await request.json()
+            elif "application/x-www-form-urlencoded" in content_type:
+                form_data = await request.form()
+                raw_payload = form_data.get("payload")
+                payload = json.loads(raw_payload) if raw_payload else {}
+            else:
+                payload = await request.json()
         except Exception:
             payload = {}
 
@@ -127,6 +136,22 @@ async def receive_webhook(slug: str, token: str, request: Request):
             session.add(log)
             session.commit()
             return {"status": "ignored", "reason": "ping event"}
+
+        if event_type != "push":
+            log = DeployLog(
+                project_id=project.id,
+                triggered_at=datetime.utcnow(),
+                trigger_type="webhook",
+                git_pull_output=f"Ignored non-push event: '{event_type}'. This webhook is subscribed to all "
+                                 f"events, but GitPulse only deploys on 'push'. In GitHub's webhook settings, "
+                                 f"consider switching to 'Just the push event' to avoid noise.",
+                git_pull_status="skipped",
+                restart_status="skipped",
+                overall_status="ignored",
+            )
+            session.add(log)
+            session.commit()
+            return {"status": "ignored", "reason": f"non-push event: {event_type}"}
 
         pusher_username = (payload.get("pusher") or {}).get("name")
         head_commit = payload.get("head_commit") or {}
