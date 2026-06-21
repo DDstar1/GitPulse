@@ -1,15 +1,13 @@
+import hmac
 import os
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_secret_key() -> str:
@@ -19,12 +17,8 @@ def get_secret_key() -> str:
     return key
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+def verify_password(plain_password: str, stored_password: str) -> bool:
+    return hmac.compare_digest(plain_password, stored_password)
 
 
 def create_access_token(username: str) -> str:

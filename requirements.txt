@@ -2,9 +2,8 @@ fastapi
 uvicorn[standard]
 sqlmodel
 python-jose[cryptography]
-passlib[bcrypt]
 python-multipart
 httpx
-pyOpenSSL
+cryptography
 python-dotenv
 jinja2

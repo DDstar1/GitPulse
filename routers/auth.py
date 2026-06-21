@@ -21,16 +21,16 @@ class LoginResponse(BaseModel):
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest):
     admin_username = os.environ.get("ADMIN_USERNAME", "admin")
-    admin_password_hash = os.environ.get("ADMIN_PASSWORD_HASH", "")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
 
-    if not admin_password_hash:
+    if not admin_password:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Admin password is not configured. Run start.py to set it up.",
         )
 
     if payload.username != admin_username or not verify_password(
-        payload.password, admin_password_hash
+        payload.password, admin_password
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
