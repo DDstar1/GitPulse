@@ -87,10 +87,24 @@ The first time it runs, `start.py` will:
 3. Look up your server's public IP (via `https://api.ipify.org`), build a
    `{ip}.nip.io` domain, and generate a self-signed SSL certificate for it
    under `certs/` (skipped on subsequent runs if the cert already exists).
-4. Start the app on `https://0.0.0.0:8443`.
+4. **On Linux**, install and start GitPulse as a `systemd` service named
+   `gitpulse` (using `sudo`, so it may prompt for your password) so it
+   survives reboots and restarts automatically if it crashes. The script
+   then exits and `systemd` takes over running the app.
+5. **On Windows/macOS** (no `systemd`), it just starts the app directly in
+   the foreground on `https://0.0.0.0:8443`.
 
-On every later run, `start.py` just reuses the existing `.env` and
-certificate and starts the server.
+On every later run, `start.py` reuses the existing `.env` and certificate,
+and on Linux just restarts the already-installed service.
+
+Once installed as a service, manage it directly with:
+
+```bash
+sudo systemctl status gitpulse
+sudo systemctl restart gitpulse
+sudo systemctl stop gitpulse
+sudo journalctl -u gitpulse -f   # tail logs
+```
 
 ### Running locally vs. exposing it publicly
 

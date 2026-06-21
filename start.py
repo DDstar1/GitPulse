@@ -1,7 +1,11 @@
 import datetime
 import getpass
 import os
+import platform
+import shutil
 import secrets
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -17,6 +21,10 @@ ENV_PATH = BASE_DIR / ".env"
 CERTS_DIR = BASE_DIR / "certs"
 CERT_PATH = CERTS_DIR / "cert.pem"
 KEY_PATH = CERTS_DIR / "key.pem"
+
+SERVICE_NAME = "gitpulse"
+SERVICE_FILE = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
+MANAGED_ENV_VAR = "GITPULSE_MANAGED_BY_SYSTEMD"
 
 
 def ensure_env_file() -> None:
@@ -111,6 +119,78 @@ def ensure_certs() -> str:
     return domain
 
 
+def run_server() -> None:
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8443,
+        ssl_certfile=str(CERT_PATH),
+        ssl_keyfile=str(KEY_PATH),
+    )
+
+
+def install_or_restart_systemd_service() -> bool:
+    """Install GitPulse as a systemd service and (re)start it.
+
+    Returns True if the service is now managing the app (so the caller
+    should not also run the server directly in the foreground).
+    """
+    if platform.system() != "Linux":
+        return False
+
+    if not shutil.which("systemctl"):
+        return False
+
+    run_user = os.environ.get("SUDO_USER") or getpass.getuser()
+    python_bin = sys.executable
+    script_path = str(BASE_DIR / "start.py")
+
+    service_contents = (
+        "[Unit]\n"
+        "Description=GitPulse self-hosted webhook deployment manager\n"
+        "After=network.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"User={run_user}\n"
+        f"WorkingDirectory={BASE_DIR}\n"
+        f"Environment={MANAGED_ENV_VAR}=1\n"
+        f"ExecStart={python_bin} {script_path}\n"
+        "Restart=on-failure\n"
+        "RestartSec=5\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+    needs_write = not SERVICE_FILE.exists() or SERVICE_FILE.read_text() != service_contents
+
+    try:
+        if needs_write:
+            print(f"🛠️  Installing systemd service '{SERVICE_NAME}'...")
+            subprocess.run(
+                ["sudo", "tee", str(SERVICE_FILE)],
+                input=service_contents,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+            subprocess.run(["sudo", "systemctl", "enable", SERVICE_NAME], check=True)
+
+        subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(f"⚠️  Could not install/start the systemd service ({exc}).")
+        print("    Falling back to running GitPulse directly in this terminal.")
+        return False
+
+    print(f"✅ GitPulse is running as the systemd service '{SERVICE_NAME}' (enabled on boot).")
+    print(f"    Logs:    sudo journalctl -u {SERVICE_NAME} -f")
+    print(f"    Status:  sudo systemctl status {SERVICE_NAME}")
+    print(f"    Restart: sudo systemctl restart {SERVICE_NAME}")
+    return True
+
+
 def main() -> None:
     ensure_env_file()
     ensure_secret_key()
@@ -119,13 +199,15 @@ def main() -> None:
     domain = ensure_certs()
     print(f"🚀 GitPulse running at https://{domain}:8443")
 
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8443,
-        ssl_certfile=str(CERT_PATH),
-        ssl_keyfile=str(KEY_PATH),
-    )
+    if os.environ.get(MANAGED_ENV_VAR):
+        # Already running inside the systemd service we installed; just serve.
+        run_server()
+        return
+
+    if install_or_restart_systemd_service():
+        return
+
+    run_server()
 
 
 if __name__ == "__main__":
