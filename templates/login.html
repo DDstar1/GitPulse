@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitPulse — Login</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="login-body">
+  <div class="login-wrapper" x-data="{
+      username: '',
+      password: '',
+      error: '',
+      loading: false,
+      async submit() {
+        this.error = '';
+        this.loading = true;
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: this.username, password: this.password })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            this.error = data.detail || 'Login failed';
+            this.loading = false;
+            return;
+          }
+          localStorage.setItem('gitpulse_token', data.access_token);
+          window.location.href = '/';
+        } catch (e) {
+          this.error = 'Could not reach server';
+          this.loading = false;
+        }
+      }
+    }">
+    <div class="login-card">
+      <div class="login-logo">
+        <span class="pulse-icon">⚡</span>
+        <span class="login-title">GitPulse</span>
+      </div>
+      <form @submit.prevent="submit">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input id="username" type="text" x-model="username" autocomplete="username" required />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input id="password" type="password" x-model="password" autocomplete="current-password" required />
+        </div>
+        <div class="login-error" x-show="error" x-text="error"></div>
+        <button type="submit" class="btn btn-primary btn-full" :disabled="loading">
+          <span x-show="!loading">Login</span>
+          <span x-show="loading">Logging in...</span>
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitPulse</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/projects.js"></script>
+  <script src="/static/js/logs.js"></script>
+</head>
+<body x-data="gitpulseApp()" x-init="init()">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand">
+          <span class="pulse-icon">⚡</span>
+          <span class="brand-name">GitPulse</span>
+        </div>
+        <nav class="sidebar-nav">
+          <a href="#" :class="{ active: view === 'projects' }" @click.prevent="setView('projects')">
+            <span class="nav-icon">📦</span> Projects
+          </a>
+          <a href="#" :class="{ active: view === 'logs' }" @click.prevent="setView('logs')">
+            <span class="nav-icon">📜</span> Logs
+          </a>
+        </nav>
+      </div>
+      <div class="sidebar-bottom">
+        <span class="version-label">v1.0.0 · self-hosted</span>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div x-show="view === 'projects'" x-data="projectsView()" x-init="load()">
+        <div class="page-header">
+          <h1>Projects</h1>
+          <button class="btn btn-primary" @click="openAddDrawer()">+ Add Project</button>
+        </div>
+
+        <template x-if="!loading && projects.length === 0">
+          <div class="empty-state">
+            <p>No projects yet. Add your first project to get started.</p>
+            <button class="btn btn-primary" @click="openAddDrawer()">+ Add Project</button>
+          </div>
+        </template>
+
+        <div class="project-grid" x-show="projects.length > 0">
+          <template x-for="project in projects" :key="project.id">
+            <div class="project-card" :class="statusBorderClass(project)">
+              <div class="project-card-header">
+                <h3 x-text="project.name"></h3>
+                <span class="badge badge-branch" x-text="project.branch"></span>
+              </div>
+              <div class="project-path" x-text="project.path"></div>
+              <div class="project-meta">
+                <span x-text="project.last_log ? formatTime(project.last_log.triggered_at) : 'Never deployed'"></span>
+              </div>
+              <div class="project-commit" x-text="project.last_log && project.last_log.commit_message ? project.last_log.commit_message : 'No deployments yet'"></div>
+              <div class="badge-row">
+                <span class="badge" :class="statusBadgeClass(project.last_log ? project.last_log.git_pull_status : null)" x-show="project.last_log">
+                  Git Pull: <span x-text="project.last_log ? project.last_log.git_pull_status : ''"></span>
+                </span>
+                <span class="badge" :class="statusBadgeClass(project.last_log ? project.last_log.restart_status : null)" x-show="project.last_log">
+                  Restart: <span x-text="project.last_log ? project.last_log.restart_status : ''"></span>
+                </span>
+              </div>
+              <div class="project-card-actions">
+                <button class="icon-btn" title="Deploy Now" @click="deployNow(project)" :disabled="project.deploying">
+                  <span x-show="!project.deploying">▶</span>
+                  <span x-show="project.deploying" class="spinner"></span>
+                </button>
+                <button class="icon-btn" title="Settings" @click="openSettingsDrawer(project)">⚙</button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Add Project Drawer -->
+        <div class="drawer-overlay" x-show="addDrawerOpen" @click="closeAddDrawer()" x-transition.opacity></div>
+        <div class="drawer" :class="{ open: addDrawerOpen }">
+          <div class="drawer-header">
+            <h2>Add Project</h2>
+            <button class="drawer-close" @click="closeAddDrawer()">✕</button>
+          </div>
+          <div class="drawer-body" x-show="!addSuccess.webhook_url">
+            <div class="form-group">
+              <label>Project Name</label>
+              <input type="text" x-model="addForm.name" placeholder="My App" />
+            </div>
+            <div class="form-group">
+              <label>Server Path</label>
+              <input type="text" class="mono" x-model="addForm.path" placeholder="/var/www/my-app"
+                     @blur="validatePath('add')" :class="{ 'input-error': addPathError, 'input-success': addPathValid }" />
+              <div class="field-error" x-show="addPathError" x-text="addPathError"></div>
+              <div class="field-success" x-show="addPathValid && addGitRemote" x-text="'✓ Git repo detected — origin: ' + addGitRemote"></div>
+            </div>
+            <div class="form-group">
+              <label>Branch</label>
+              <input type="text" x-model="addForm.branch" placeholder="main" />
+            </div>
+            <div class="form-group">
+              <label>Restart Command <span class="optional-label">(optional)</span></label>
+              <input type="text" class="mono" x-model="addForm.restart_command" placeholder="pm2 restart app" />
+              <div class="example-chips">
+                <span class="chip">systemctl restart app</span>
+                <span class="chip">pm2 restart app</span>
+                <span class="chip">docker compose up -d</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>GitHub Webhook Secret</label>
+              <div class="input-with-button">
+                <input :type="addSecretVisible ? 'text' : 'password'" x-model="addForm.github_webhook_secret" placeholder="optional secret" />
+                <button type="button" class="btn btn-secondary btn-small" @click="pasteSecret('add')">Paste</button>
+              </div>
+            </div>
+            <div class="form-error" x-show="addFormError" x-text="addFormError"></div>
+            <button class="btn btn-primary btn-full" @click="submitAdd()" :disabled="addSaving">
+              <span x-show="!addSaving">Save Project</span>
+              <span x-show="addSaving">Saving...</span>
+            </button>
+          </div>
+          <div class="drawer-body" x-show="addSuccess.webhook_url">
+            <p class="success-heading">✓ Project created</p>
+            <div class="form-group">
+              <label>Webhook URL</label>
+              <div class="copy-field">
+                <input type="text" class="mono" readonly :value="addSuccess.webhook_url" x-ref="addWebhookUrl" />
+                <button class="btn btn-secondary btn-small" @click="copyToClipboard($refs.addWebhookUrl.value)">Copy</button>
+              </div>
+              <p class="hint-text">Paste this URL into your GitHub repository webhook settings. Check "Disable SSL verification" in GitHub if using a self-signed certificate.</p>
+            </div>
+            <button class="btn btn-primary btn-full" @click="closeAddDrawer()">Done</button>
+          </div>
+        </div>
+
+        <!-- Settings Drawer -->
+        <div class="drawer-overlay" x-show="settingsDrawerOpen" @click="closeSettingsDrawer()" x-transition.opacity></div>
+        <div class="drawer" :class="{ open: settingsDrawerOpen }" x-show="settingsDrawerOpen || true" x-cloak>
+          <template x-if="settingsProject">
+            <div>
+              <div class="drawer-header">
+                <h2 x-text="'Settings — ' + settingsProject.name"></h2>
+                <button class="drawer-close" @click="closeSettingsDrawer()">✕</button>
+              </div>
+              <div class="drawer-body">
+                <div class="form-group">
+                  <label>Project Name</label>
+                  <input type="text" x-model="settingsForm.name" />
+                </div>
+                <div class="form-group">
+                  <label>Server Path</label>
+                  <input type="text" class="mono" x-model="settingsForm.path" placeholder="/var/www/my-app"
+                         @blur="validatePath('settings')" :class="{ 'input-error': settingsPathError, 'input-success': settingsPathValid }" />
+                  <div class="field-error" x-show="settingsPathError" x-text="settingsPathError"></div>
+                  <div class="field-success" x-show="settingsPathValid && settingsGitRemote" x-text="'✓ Git repo detected — origin: ' + settingsGitRemote"></div>
+                </div>
+                <div class="form-group">
+                  <label>Branch</label>
+                  <input type="text" x-model="settingsForm.branch" />
+                </div>
+                <div class="form-group">
+                  <label>Restart Command <span class="optional-label">(optional)</span></label>
+                  <input type="text" class="mono" x-model="settingsForm.restart_command" placeholder="pm2 restart app" />
+                  <div class="example-chips">
+                    <span class="chip">systemctl restart app</span>
+                    <span class="chip">pm2 restart app</span>
+                    <span class="chip">docker compose up -d</span>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>GitHub Webhook Secret</label>
+                  <div class="input-with-button" x-show="!secretEditing">
+                    <input type="text" value="••••••••" readonly />
+                    <button type="button" class="btn btn-secondary btn-small" @click="secretEditing = true; settingsForm.github_webhook_secret = ''">Change</button>
+                  </div>
+                  <div class="input-with-button" x-show="secretEditing">
+                    <input type="password" x-model="settingsForm.github_webhook_secret" placeholder="new secret" />
+                    <button type="button" class="btn btn-secondary btn-small" @click="secretEditing = false; settingsForm.github_webhook_secret = undefined">Cancel</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Webhook URL</label>
+                  <div class="copy-field">
+                    <input type="text" class="mono" readonly :value="settingsProject.webhook_url" x-ref="settingsWebhookUrl" />
+                    <button class="btn btn-secondary btn-small" @click="copyToClipboard($refs.settingsWebhookUrl.value)">Copy</button>
+                  </div>
+                </div>
+                <div class="form-error" x-show="settingsFormError" x-text="settingsFormError"></div>
+                <button class="btn btn-primary btn-full" @click="submitSettings()" :disabled="settingsSaving">
+                  <span x-show="!settingsSaving">Save Changes</span>
+                  <span x-show="settingsSaving">Saving...</span>
+                </button>
+
+                <div class="danger-zone">
+                  <button class="btn btn-danger btn-full" x-show="!deleteConfirming" @click="deleteConfirming = true">Delete Project</button>
+                  <div class="confirm-box" x-show="deleteConfirming">
+                    <p>Are you sure? This will delete all deploy history.</p>
+                    <div class="confirm-actions">
+                      <button class="btn btn-danger" @click="confirmDelete()">Confirm</button>
+                      <button class="btn btn-secondary" @click="deleteConfirming = false">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="view === 'logs'" x-data="logsView()" x-init="load()">
+        <div class="page-header">
+          <h1>Logs</h1>
+        </div>
+        <div class="filters-row">
+          <select x-model="projectFilter" @change="load()">
+            <option value="">All Projects</option>
+            <template x-for="p in projectOptions" :key="p.id">
+              <option :value="p.id" x-text="p.name"></option>
+            </template>
+          </select>
+          <select x-model="statusFilter" @change="load()">
+            <option value="">All Statuses</option>
+            <option value="success">Success</option>
+            <option value="failed">Failed</option>
+          </select>
+        </div>
+
+        <template x-if="!loading && logs.length === 0">
+          <div class="empty-state">
+            <p>No deploy logs yet.</p>
+          </div>
+        </template>
+
+        <div class="timeline">
+          <template x-for="log in logs" :key="log.id">
+            <div class="timeline-card" @click="toggleExpand(log.id)">
+              <div class="timeline-card-header">
+                <span class="badge badge-project" x-text="log.project_name"></span>
+                <span class="badge" :class="log.trigger_type === 'webhook' ? 'badge-webhook' : 'badge-manual'" x-text="log.trigger_type === 'webhook' ? 'Webhook' : 'Manual'"></span>
+                <span class="timeline-time" x-text="formatTime(log.triggered_at)"></span>
+                <span class="timeline-pusher" x-show="log.pusher_username" x-text="'by ' + log.pusher_username"></span>
+                <span class="timeline-sha mono" x-show="log.commit_sha" x-text="log.commit_sha ? log.commit_sha.substring(0,7) : ''"></span>
+                <span class="timeline-commit" x-text="log.commit_message ? truncate(log.commit_message, 60) : ''"></span>
+                <span class="badge" :class="statusBadgeClass(log.git_pull_status)" x-text="'Pull: ' + log.git_pull_status"></span>
+                <span class="badge" :class="statusBadgeClass(log.restart_status)" x-text="'Restart: ' + log.restart_status"></span>
+                <span class="chevron" :class="{ open: expanded === log.id }">⌄</span>
+              </div>
+              <div class="timeline-card-body" x-show="expanded === log.id" @click.stop>
+                <div class="detail-row"><strong>Commit SHA:</strong> <span class="mono" x-text="log.commit_sha || 'N/A'"></span></div>
+                <div class="detail-row"><strong>Commit Message:</strong> <span x-text="log.commit_message || 'N/A'"></span></div>
+                <div class="detail-row"><strong>Branch:</strong> <span x-text="log.branch || 'N/A'"></span></div>
+                <div class="detail-row"><strong>Pushed by:</strong> <span x-text="log.pusher_username || 'N/A'"></span></div>
+
+                <div class="terminal-block">
+                  <div class="terminal-header">Git Pull Output</div>
+                  <pre class="terminal-output" x-text="log.git_pull_output"></pre>
+                </div>
+                <div class="terminal-block">
+                  <div class="terminal-header" x-text="log.restart_output !== null ? ('Restart Output — ' + (log.restart_command || '')) : 'Restart Output'"></div>
+                  <pre class="terminal-output" x-show="log.restart_status !== 'skipped'" x-text="log.restart_output"></pre>
+                  <p class="muted-text" x-show="log.restart_status === 'skipped'">No restart command configured</p>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast-container">
+    <template x-for="toast in toasts" :key="toast.id">
+      <div class="toast" :class="toast.type" x-text="toast.message" x-transition></div>
+    </template>
+  </div>
+</body>
+</html>
