@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from auth import get_current_user
 from database import get_session
 from models import Project, DeployLog, slugify
+from process_manager import remove_project_service, systemd_available
 from routers.webhooks import run_deploy
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -44,6 +45,7 @@ class ProjectCreate(BaseModel):
     path: str
     branch: str = "main"
     restart_command: Optional[str] = None
+    launch_command: Optional[str] = None
     github_webhook_secret: str
 
 
@@ -52,6 +54,7 @@ class ProjectUpdate(BaseModel):
     path: Optional[str] = None
     branch: Optional[str] = None
     restart_command: Optional[str] = None
+    launch_command: Optional[str] = None
     github_webhook_secret: Optional[str] = None
 
 
@@ -72,7 +75,7 @@ class ProjectResponse(BaseModel):
 def serialize_project(project: Project, request: Request, session: Session) -> dict:
     last_log = session.exec(
         select(DeployLog)
-        .where(DeployLog.project_id == project.id)
+        .where(DeployLog.project_id == project.id, DeployLog.overall_status != "ignored")
         .order_by(DeployLog.triggered_at.desc())
     ).first()
 
@@ -93,6 +96,7 @@ def serialize_project(project: Project, request: Request, session: Session) -> d
         "path": project.path,
         "branch": project.branch,
         "restart_command": project.restart_command,
+        "launch_command": project.launch_command,
         "has_webhook_secret": bool(project.github_webhook_secret),
         "created_at": project.created_at.isoformat(),
         "webhook_url": get_webhook_url(request, project.slug, project.webhook_token),
@@ -111,6 +115,11 @@ def validate_path_endpoint(
 ):
     git_remote = validate_git_path(payload.path)
     return {"git_remote": git_remote}
+
+
+@router.get("/capabilities")
+def get_capabilities(user: str = Depends(get_current_user)):
+    return {"systemd_available": systemd_available()}
 
 
 @router.get("")
@@ -136,6 +145,18 @@ def create_project(
             detail="A GitHub webhook secret is required",
         )
 
+    if payload.restart_command and payload.launch_command:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use either a restart command or a launch command, not both",
+        )
+
+    if payload.launch_command and not systemd_available():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Auto-managed launch commands require Linux with systemd on this server",
+        )
+
     git_remote = validate_git_path(payload.path)
 
     slug = slugify(payload.name)
@@ -152,6 +173,7 @@ def create_project(
         path=payload.path,
         branch=payload.branch or "main",
         restart_command=payload.restart_command,
+        launch_command=payload.launch_command,
         github_webhook_secret=payload.github_webhook_secret,
     )
     session.add(project)
@@ -195,11 +217,29 @@ def update_project(
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
+    final_restart_command = (
+        payload.restart_command if payload.restart_command is not None else project.restart_command
+    )
+    final_launch_command = (
+        payload.launch_command if payload.launch_command is not None else project.launch_command
+    )
+    if final_restart_command and final_launch_command:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use either a restart command or a launch command, not both",
+        )
+    if final_launch_command and not systemd_available():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Auto-managed launch commands require Linux with systemd on this server",
+        )
+
     git_remote = None
     if payload.path is not None and payload.path != project.path:
         git_remote = validate_git_path(payload.path)
         project.path = payload.path
 
+    old_slug = project.slug
     if payload.name is not None and payload.name != project.name:
         new_slug = slugify(payload.name)
         existing = session.exec(
@@ -217,6 +257,8 @@ def update_project(
         project.branch = payload.branch
     if payload.restart_command is not None:
         project.restart_command = payload.restart_command
+    if payload.launch_command is not None:
+        project.launch_command = payload.launch_command
     if payload.github_webhook_secret is not None:
         if not payload.github_webhook_secret.strip():
             raise HTTPException(
@@ -224,6 +266,9 @@ def update_project(
                 detail="A GitHub webhook secret is required",
             )
         project.github_webhook_secret = payload.github_webhook_secret
+
+    if old_slug != project.slug and project.launch_command:
+        remove_project_service(old_slug)
 
     session.add(project)
     session.commit()
@@ -248,6 +293,9 @@ def delete_project(
     logs = session.exec(select(DeployLog).where(DeployLog.project_id == project_id)).all()
     for log in logs:
         session.delete(log)
+
+    if project.launch_command:
+        remove_project_service(project.slug)
 
     session.delete(project)
     session.commit()

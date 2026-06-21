@@ -47,7 +47,7 @@ function truncate(text, length) {
 function statusBadgeClass(status) {
   if (status === 'success') return 'badge-success';
   if (status === 'failed') return 'badge-failed';
-  if (status === 'skipped') return 'badge-skipped';
+  if (status === 'skipped' || status === 'ignored') return 'badge-skipped';
   return '';
 }
 

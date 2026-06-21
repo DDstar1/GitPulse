@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from database import engine
 from models import DeployLog, Project
+from process_manager import ensure_project_service
 
 router = APIRouter(tags=["webhooks"])
 
@@ -31,7 +32,9 @@ def run_deploy(project: Project, session: Session, trigger_type: str,
     restart_output: Optional[str] = None
     restart_status = "skipped"
 
-    if project.restart_command:
+    if project.launch_command:
+        restart_output, restart_status = ensure_project_service(project)
+    elif project.restart_command:
         restart_result = subprocess.run(
             project.restart_command, shell=True, capture_output=True,
             text=True, cwd=project.path
@@ -109,6 +112,22 @@ async def receive_webhook(slug: str, token: str, request: Request):
         except Exception:
             payload = {}
 
+        event_type = request.headers.get("X-GitHub-Event", "")
+
+        if event_type == "ping":
+            log = DeployLog(
+                project_id=project.id,
+                triggered_at=datetime.utcnow(),
+                trigger_type="webhook",
+                git_pull_output="GitHub ping event received (connectivity test, no deploy triggered).",
+                git_pull_status="skipped",
+                restart_status="skipped",
+                overall_status="ignored",
+            )
+            session.add(log)
+            session.commit()
+            return {"status": "ignored", "reason": "ping event"}
+
         pusher_username = (payload.get("pusher") or {}).get("name")
         head_commit = payload.get("head_commit") or {}
         commit_message = head_commit.get("message")
@@ -117,6 +136,19 @@ async def receive_webhook(slug: str, token: str, request: Request):
         pushed_branch = ref.replace("refs/heads/", "") if ref else None
 
         if pushed_branch != project.branch:
+            log = DeployLog(
+                project_id=project.id,
+                triggered_at=datetime.utcnow(),
+                trigger_type="webhook",
+                pusher_username=pusher_username,
+                branch=pushed_branch,
+                git_pull_output=f"Push to '{pushed_branch}' ignored (this project tracks '{project.branch}').",
+                git_pull_status="skipped",
+                restart_status="skipped",
+                overall_status="ignored",
+            )
+            session.add(log)
+            session.commit()
             return {"status": "ignored", "reason": "branch mismatch"}
 
         log = run_deploy(

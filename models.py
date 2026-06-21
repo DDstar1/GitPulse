@@ -25,6 +25,7 @@ class Project(SQLModel, table=True):
     path: str
     branch: str = Field(default="main")
     restart_command: Optional[str] = Field(default=None)
+    launch_command: Optional[str] = Field(default=None)
     webhook_token: str = Field(default_factory=generate_webhook_token)
     github_webhook_secret: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)

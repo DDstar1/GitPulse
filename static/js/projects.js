@@ -2,9 +2,11 @@ function projectsView() {
   return {
     projects: [],
     loading: true,
+    capabilities: { systemd_available: false },
 
     addDrawerOpen: false,
-    addForm: { name: '', path: '', branch: 'main', restart_command: '', github_webhook_secret: '' },
+    addForm: { name: '', path: '', branch: 'main', restart_command: '', launch_command: '', github_webhook_secret: '' },
+    addRestartMode: 'manual',
     addSecretConfirm: '',
     addPathError: '',
     addPathValid: false,
@@ -16,6 +18,7 @@ function projectsView() {
     settingsDrawerOpen: false,
     settingsProject: null,
     settingsForm: {},
+    settingsRestartMode: 'manual',
     settingsSecretConfirm: '',
     settingsPathError: '',
     settingsPathValid: false,
@@ -28,9 +31,15 @@ function projectsView() {
     async load() {
       this.loading = true;
       try {
-        const res = await apiFetch('/api/projects');
-        if (res.ok) {
-          this.projects = await res.json();
+        const [projectsRes, capabilitiesRes] = await Promise.all([
+          apiFetch('/api/projects'),
+          apiFetch('/api/projects/capabilities'),
+        ]);
+        if (projectsRes.ok) {
+          this.projects = await projectsRes.json();
+        }
+        if (capabilitiesRes.ok) {
+          this.capabilities = await capabilitiesRes.json();
         }
       } finally {
         this.loading = false;
@@ -72,7 +81,8 @@ function projectsView() {
     },
 
     openAddDrawer() {
-      this.addForm = { name: '', path: '', branch: 'main', restart_command: '', github_webhook_secret: '' };
+      this.addForm = { name: '', path: '', branch: 'main', restart_command: '', launch_command: '', github_webhook_secret: '' };
+      this.addRestartMode = 'manual';
       this.addSecretConfirm = '';
       this.addPathError = '';
       this.addPathValid = false;
@@ -181,8 +191,10 @@ function projectsView() {
         path: project.path,
         branch: project.branch,
         restart_command: project.restart_command || '',
+        launch_command: project.launch_command || '',
         github_webhook_secret: undefined,
       };
+      this.settingsRestartMode = project.launch_command ? 'auto' : 'manual';
       this.settingsSecretConfirm = '';
       this.settingsPathError = '';
       this.settingsPathValid = false;
@@ -205,6 +217,7 @@ function projectsView() {
         path: this.settingsForm.path,
         branch: this.settingsForm.branch,
         restart_command: this.settingsForm.restart_command,
+        launch_command: this.settingsForm.launch_command,
       };
       if (this.secretEditing && this.settingsForm.github_webhook_secret !== undefined) {
         if (!this.settingsForm.github_webhook_secret) {

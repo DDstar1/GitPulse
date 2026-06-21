@@ -201,6 +201,21 @@ button {
   white-space: nowrap;
 }
 
+.restart-mode-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.restart-mode-toggle .btn {
+  flex: 1;
+}
+
+.restart-mode-toggle .btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 /* Forms */
 .form-group {
   margin-bottom: 18px;
