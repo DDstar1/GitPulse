@@ -4,8 +4,10 @@ import os
 import platform
 import shutil
 import secrets
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -25,6 +27,97 @@ KEY_PATH = CERTS_DIR / "key.pem"
 SERVICE_NAME = "gitpulse"
 SERVICE_FILE = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
 MANAGED_ENV_VAR = "GITPULSE_MANAGED_BY_SYSTEMD"
+PORT = 8443
+
+
+def find_pid_on_port(port: int) -> "tuple[str, str] | None":
+    """Returns (pid, descriptive line) for whatever holds the port, if found."""
+    try:
+        if platform.system() == "Linux" and shutil.which("ss"):
+            result = subprocess.run(
+                ["sudo", "ss", "-ltnp"], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f":{port} " in line or line.rstrip().endswith(f":{port}"):
+                    marker = "pid="
+                    if marker in line:
+                        pid = line.split(marker, 1)[1].split(",", 1)[0]
+                        return pid, line.strip()
+        elif platform.system() == "Windows" and shutil.which("netstat"):
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f":{port} " in line:
+                    pid = line.split()[-1]
+                    return pid, line.strip()
+    except Exception:
+        pass
+    return None
+
+
+def is_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", port))
+        except OSError:
+            return True
+    return False
+
+
+def kill_pid(pid: str) -> bool:
+    try:
+        if platform.system() == "Linux":
+            subprocess.run(["sudo", "kill", "-9", pid], check=True, timeout=5)
+        else:
+            subprocess.run(["taskkill", "/PID", pid, "/F"], check=True, timeout=5)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def ensure_port_available(port: int) -> None:
+    if os.environ.get(MANAGED_ENV_VAR):
+        # Running inside our own systemd unit; nothing else should be bound yet.
+        return
+
+    if not is_port_in_use(port):
+        return
+
+    print(f"⚠️  Port {port} is already in use.")
+
+    if platform.system() == "Linux" and shutil.which("systemctl"):
+        status = subprocess.run(
+            ["systemctl", "is-active", SERVICE_NAME],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        if status == "active":
+            print(f"   The '{SERVICE_NAME}' systemd service already owns it — restarting it instead.")
+            subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME])
+            sys.exit(0)
+
+    found = find_pid_on_port(port)
+    if not found:
+        print(f"   Could not identify the process holding port {port}. Free it manually and retry.")
+        sys.exit(1)
+
+    pid, line = found
+    print(f"   Found: {line}")
+    print(f"   Stopping process {pid} to free the port...")
+
+    if not kill_pid(pid):
+        print(f"   Failed to stop process {pid}. Free it manually and retry.")
+        sys.exit(1)
+
+    for _ in range(10):
+        time.sleep(0.5)
+        if not is_port_in_use(port):
+            print(f"✅ Port {port} is now free.")
+            return
+
+    print(f"   Process {pid} was stopped but port {port} is still in use. Free it manually and retry.")
+    sys.exit(1)
 
 
 def ensure_env_file() -> None:
@@ -123,7 +216,7 @@ def run_server() -> None:
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8443,
+        port=PORT,
         ssl_certfile=str(CERT_PATH),
         ssl_keyfile=str(KEY_PATH),
     )
@@ -196,8 +289,10 @@ def main() -> None:
     ensure_secret_key()
     ensure_admin_password()
 
+    ensure_port_available(PORT)
+
     domain = ensure_certs()
-    print(f"🚀 GitPulse running at https://{domain}:8443")
+    print(f"🚀 GitPulse running at https://{domain}:{PORT}")
 
     if os.environ.get(MANAGED_ENV_VAR):
         # Already running inside the systemd service we installed; just serve.
