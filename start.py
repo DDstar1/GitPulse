@@ -95,6 +95,13 @@ def ensure_port_available(port: int) -> None:
         if status == "active":
             print(f"   The '{SERVICE_NAME}' systemd service already owns it — restarting it instead.")
             subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME])
+            try:
+                ip = fetch_public_ip()
+                print()
+                print(f"🚀 GitPulse running at https://{ip}.nip.io:{port}")
+                print()
+            except Exception:
+                pass
             sys.exit(0)
 
     found = find_pid_on_port(port)
