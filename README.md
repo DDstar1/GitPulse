@@ -44,6 +44,24 @@ using a JWT stored in `localStorage`.
 
 ## Setup
 
+The fastest path is the bundled setup script — it creates the virtual
+environment, installs dependencies, and launches the app, all in one step.
+Re-running it later just reuses the existing venv and starts the app again.
+
+**Linux/macOS:**
+
+```bash
+./setup.sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+.\setup.ps1
+```
+
+If you'd rather do it manually:
+
 ```bash
 # from the project root
 python -m venv venv
@@ -54,15 +72,10 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
-```
-
-Run the app with the bootstrap script (not `uvicorn` directly):
-
-```bash
 python start.py
 ```
 
-The first time you run it, `start.py` will:
+The first time it runs, `start.py` will:
 
 1. Create `.env` from scratch if missing, and generate a random
    `SECRET_KEY` (used to sign dashboard login JWTs — unrelated to GitHub
