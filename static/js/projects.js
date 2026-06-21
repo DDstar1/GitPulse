@@ -5,17 +5,18 @@ function projectsView() {
 
     addDrawerOpen: false,
     addForm: { name: '', path: '', branch: 'main', restart_command: '', github_webhook_secret: '' },
+    addSecretConfirm: '',
     addPathError: '',
     addPathValid: false,
     addGitRemote: '',
     addFormError: '',
     addSaving: false,
     addSuccess: {},
-    addSecretVisible: false,
 
     settingsDrawerOpen: false,
     settingsProject: null,
     settingsForm: {},
+    settingsSecretConfirm: '',
     settingsPathError: '',
     settingsPathValid: false,
     settingsGitRemote: '',
@@ -72,6 +73,7 @@ function projectsView() {
 
     openAddDrawer() {
       this.addForm = { name: '', path: '', branch: 'main', restart_command: '', github_webhook_secret: '' };
+      this.addSecretConfirm = '';
       this.addPathError = '';
       this.addPathValid = false;
       this.addGitRemote = '';
@@ -90,7 +92,9 @@ function projectsView() {
         const text = await navigator.clipboard.readText();
         if (target === 'add') {
           this.addForm.github_webhook_secret = text;
-        } else {
+        } else if (target === 'addConfirm') {
+          this.addSecretConfirm = text;
+        } else if (target === 'settings') {
           this.settingsForm.github_webhook_secret = text;
         }
       } catch (e) {
@@ -141,6 +145,14 @@ function projectsView() {
         this.addFormError = 'Project name and server path are required';
         return;
       }
+      if (!this.addForm.github_webhook_secret) {
+        this.addFormError = 'A GitHub webhook secret is required';
+        return;
+      }
+      if (this.addForm.github_webhook_secret !== this.addSecretConfirm) {
+        this.addFormError = 'Webhook secret and confirmation do not match';
+        return;
+      }
 
       this.addSaving = true;
       try {
@@ -171,6 +183,7 @@ function projectsView() {
         restart_command: project.restart_command || '',
         github_webhook_secret: undefined,
       };
+      this.settingsSecretConfirm = '';
       this.settingsPathError = '';
       this.settingsPathValid = false;
       this.settingsGitRemote = '';
@@ -194,6 +207,14 @@ function projectsView() {
         restart_command: this.settingsForm.restart_command,
       };
       if (this.secretEditing && this.settingsForm.github_webhook_secret !== undefined) {
+        if (!this.settingsForm.github_webhook_secret) {
+          this.settingsFormError = 'A GitHub webhook secret is required';
+          return;
+        }
+        if (this.settingsForm.github_webhook_secret !== this.settingsSecretConfirm) {
+          this.settingsFormError = 'Webhook secret and confirmation do not match';
+          return;
+        }
         payload.github_webhook_secret = this.settingsForm.github_webhook_secret;
       }
 

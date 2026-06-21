@@ -112,11 +112,23 @@
               </div>
             </div>
             <div class="form-group">
-              <label>GitHub Webhook Secret</label>
+              <label>GitHub Webhook Secret <span class="required-label">(required)</span></label>
               <div class="input-with-button">
-                <input :type="addSecretVisible ? 'text' : 'password'" x-model="addForm.github_webhook_secret" placeholder="optional secret" />
+                <input type="password" x-model="addForm.github_webhook_secret" placeholder="paste secret" required />
                 <button type="button" class="btn btn-secondary btn-small" @click="pasteSecret('add')">Paste</button>
               </div>
+            </div>
+            <div class="form-group">
+              <label>Confirm Secret <span class="required-label">(required)</span></label>
+              <div class="input-with-button">
+                <input type="password" x-model="addSecretConfirm" placeholder="paste secret again" required
+                       :class="{ 'input-error': addSecretConfirm && addForm.github_webhook_secret !== addSecretConfirm }" />
+                <button type="button" class="btn btn-secondary btn-small" @click="pasteSecret('addConfirm')">Paste</button>
+              </div>
+              <div class="field-error" x-show="addSecretConfirm && addForm.github_webhook_secret !== addSecretConfirm">
+                Secrets do not match
+              </div>
+              <p class="hint-text">Pasting it twice catches clipboard/typo mistakes. There's no way to verify it matches GitHub until a real webhook is delivered — after saving, use GitHub's "Redeliver" button on this webhook and check the Logs page here for a successful (not 401) result.</p>
             </div>
             <div class="form-error" x-show="addFormError" x-text="addFormError"></div>
             <button class="btn btn-primary btn-full" @click="submitAdd()" :disabled="addSaving">
@@ -173,15 +185,27 @@
                   </div>
                 </div>
                 <div class="form-group">
-                  <label>GitHub Webhook Secret</label>
+                  <label>GitHub Webhook Secret <span class="required-label">(required)</span></label>
                   <div class="input-with-button" x-show="!secretEditing">
                     <input type="text" value="••••••••" readonly />
-                    <button type="button" class="btn btn-secondary btn-small" @click="secretEditing = true; settingsForm.github_webhook_secret = ''">Change</button>
+                    <button type="button" class="btn btn-secondary btn-small" @click="secretEditing = true; settingsForm.github_webhook_secret = ''; settingsSecretConfirm = ''">Change</button>
                   </div>
-                  <div class="input-with-button" x-show="secretEditing">
-                    <input type="password" x-model="settingsForm.github_webhook_secret" placeholder="new secret" />
-                    <button type="button" class="btn btn-secondary btn-small" @click="secretEditing = false; settingsForm.github_webhook_secret = undefined">Cancel</button>
-                  </div>
+                  <template x-if="secretEditing">
+                    <div>
+                      <div class="input-with-button">
+                        <input type="password" x-model="settingsForm.github_webhook_secret" placeholder="new secret" required />
+                        <button type="button" class="btn btn-secondary btn-small" @click="pasteSecret('settings')">Paste</button>
+                      </div>
+                      <div class="input-with-button" style="margin-top: 8px;">
+                        <input type="password" x-model="settingsSecretConfirm" placeholder="confirm new secret" required
+                               :class="{ 'input-error': settingsSecretConfirm && settingsForm.github_webhook_secret !== settingsSecretConfirm }" />
+                        <button type="button" class="btn btn-secondary btn-small" @click="secretEditing = false; settingsForm.github_webhook_secret = undefined; settingsSecretConfirm = ''">Cancel</button>
+                      </div>
+                      <div class="field-error" x-show="settingsSecretConfirm && settingsForm.github_webhook_secret !== settingsSecretConfirm">
+                        Secrets do not match
+                      </div>
+                    </div>
+                  </template>
                 </div>
                 <div class="form-group">
                   <label>Webhook URL</label>

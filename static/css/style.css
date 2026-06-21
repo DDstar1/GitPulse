@@ -217,6 +217,11 @@ button {
   font-weight: 400;
 }
 
+.required-label {
+  color: var(--warning);
+  font-weight: 400;
+}
+
 input[type="text"],
 input[type="password"],
 input[type="email"],

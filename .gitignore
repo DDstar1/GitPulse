@@ -6,3 +6,4 @@ gitpulse.db
 certs/*.pem
 !certs/.gitkeep
 github-txt
+letsencrypt-deploy-hook.sh

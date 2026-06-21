@@ -41,6 +41,10 @@ using a JWT stored in `localStorage`.
 - The project(s) you want to deploy must already be cloned somewhere on this
   same server — GitPulse does not clone repos for you, it only pulls
   updates to an existing checkout
+- On Linux, `sudo` access (for installing the systemd service and, if
+  applicable, `certbot`/the Let's Encrypt certificate) and `apt`-based
+  package management (Debian/Ubuntu) for the automatic `certbot` install to
+  work
 
 ## Setup
 
@@ -84,14 +88,26 @@ The first time it runs, `start.py` will:
    `.env` as `ADMIN_PASSWORD`. Note: this is stored in **plaintext** — by
    design, to keep the single-admin self-hosted setup simple. Keep
    `.env` out of version control and restrict its file permissions.
-3. Look up your server's public IP (via `https://api.ipify.org`), build a
-   `{ip}.nip.io` domain, and generate a self-signed SSL certificate for it
-   under `certs/` (skipped on subsequent runs if the cert already exists).
-4. **On Linux**, install and start GitPulse as a `systemd` service named
+3. Look up your server's public IP (via `https://api.ipify.org`) and build a
+   `{ip}.nip.io` domain for it. Then, **on Linux**, it tries to get a real,
+   browser-trusted certificate for that domain via Let's Encrypt
+   (`certbot`, auto-installed via `apt` if missing) — this needs port `80`
+   open and reachable from the internet for the HTTP-01 challenge. If that
+   isn't possible (port 80 unreachable/in use, certbot install fails, or
+   you're not on Linux), it falls back to generating a self-signed
+   certificate instead. Either way the result is saved under `certs/` and
+   reused on every later run — Let's Encrypt certs renew automatically via
+   `certbot`'s own timer.
+4. Checks if port `8443` is already in use before starting. If the
+   `gitpulse` systemd service already owns it, that service is just
+   restarted. If some other leftover process holds it (e.g. an old manual
+   run), that process is found and killed automatically so startup can
+   proceed.
+5. **On Linux**, install and start GitPulse as a `systemd` service named
    `gitpulse` (using `sudo`, so it may prompt for your password) so it
    survives reboots and restarts automatically if it crashes. The script
    then exits and `systemd` takes over running the app.
-5. **On Windows/macOS** (no `systemd`), it just starts the app directly in
+6. **On Windows/macOS** (no `systemd`), it just starts the app directly in
    the foreground on `https://0.0.0.0:8443`.
 
 On every later run, `start.py` reuses the existing `.env` and certificate,
@@ -108,20 +124,25 @@ sudo journalctl -u gitpulse -f   # tail logs
 
 ### Running locally vs. exposing it publicly
 
-- **Local/dev use:** open `https://localhost:8443` (or `127.0.0.1`). You'll
-  get a certificate warning since the cert's hostname is your public IP's
-  `nip.io` domain, not `localhost` — click through it.
+- **Local/dev use:** open `https://localhost:8443` (or `127.0.0.1`). If
+  `start.py` fell back to a self-signed certificate, you'll get a browser
+  warning since the cert's hostname is your public IP's `nip.io` domain,
+  not `localhost` — click through it. (A Let's Encrypt cert would still
+  show this warning locally too, since it's only valid for the public
+  domain.)
 - **Receiving real GitHub webhooks:** GitHub needs to reach this server over
-  the public internet, so you'll need port-forwarding on your router (
-  external `8443` → this machine's LAN IP, port `8443`) and a firewall rule
-  allowing inbound traffic on that port. Then use
+  the public internet. On a home network you'll need port-forwarding on
+  your router (external `8443` → this machine's LAN IP, port `8443`, and
+  port `80` too if you want Let's Encrypt) plus a firewall rule allowing
+  that inbound traffic. On a cloud VM (AWS/GCP/etc.), open the same ports
+  in its security group / firewall rules instead. Then use
   `https://{your-public-ip}.nip.io:8443` as the base for webhook URLs (this
   is generated automatically from the incoming request, so no extra config
   is needed once the network path is open).
-- Since the certificate is self-signed, GitHub will refuse to verify it by
-  default — when adding the webhook in GitHub, check **"Disable SSL
-  verification"** (shown as a hint in the dashboard's webhook URL field
-  too).
+- If `start.py` had to fall back to a self-signed certificate, GitHub will
+  refuse to verify it by default — when adding the webhook in GitHub, check
+  **"Disable SSL verification"** (shown as a hint in the dashboard's webhook
+  URL field too). With a real Let's Encrypt certificate this isn't needed.
 
 ## Using the dashboard
 
@@ -137,13 +158,24 @@ sudo journalctl -u gitpulse -f   # tail logs
    - **Restart Command** *(optional)* — shell command run after a
      successful pull, e.g. `pm2 restart app`, `systemctl restart app`, or
      `docker compose up -d`. Leave blank to skip restarting anything.
-   - **GitHub Webhook Secret** *(optional but recommended)* — if set,
-     incoming webhook payloads are verified against it; mismatched/missing
-     signatures are rejected with 401.
+   - **GitHub Webhook Secret** *(required)* — every incoming webhook
+     payload is verified against this using HMAC-SHA256; mismatched or
+     missing signatures are rejected with 401 and recorded as a failed
+     entry in the Logs page. You're asked to paste it twice (a confirm
+     field) since there's no way to validate it actually matches what
+     you'll put into GitHub until a real delivery happens — there's no
+     "test secret" API. Mismatches between the two fields are caught
+     immediately; mismatches with GitHub's side only show up once a
+     webhook is actually delivered.
 3. After saving, you'll get a **webhook URL** — copy it into the GitHub
    repo's webhook settings (`Settings → Webhooks → Add webhook`), set
-   content type to `application/json`, and (if you set a secret above) put
-   the same secret in GitHub's "Secret" field.
+   content type to `application/json`, and put the same secret you entered
+   above into GitHub's "Secret" field.
+   - To confirm the secret is actually correct, use GitHub's **"Redeliver"**
+     button on that webhook (under Settings → Webhooks → click the webhook
+     → Recent Deliveries) and check the Logs page here: a 401/"Invalid
+     signature" entry means the secret doesn't match what you put in
+     GitHub; a real pull/restart attempt means it matched.
 4. **Deploy** — pushing to the configured branch on GitHub triggers a
    deploy automatically. You can also click the ▶ **Deploy Now** button on
    a project card to trigger one manually at any time.

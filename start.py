@@ -199,16 +199,90 @@ def generate_self_signed_cert(domain: str) -> None:
     )
 
 
-def ensure_certs() -> str:
-    if CERT_PATH.exists() and KEY_PATH.exists():
-        ip = fetch_public_ip()
-        return f"{ip}.nip.io"
+def ensure_certbot_installed() -> bool:
+    if shutil.which("certbot"):
+        return True
 
-    print("🔐 Generating SSL certificate...")
+    if not shutil.which("apt-get"):
+        return False
+
+    print("🛠️  Installing certbot...")
+    try:
+        subprocess.run(["sudo", "apt-get", "update", "-qq"], check=True, timeout=120)
+        subprocess.run(["sudo", "apt-get", "install", "-y", "certbot"], check=True, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+    return shutil.which("certbot") is not None
+
+
+def try_letsencrypt_cert(domain: str) -> bool:
+    """Attempt to obtain a real Let's Encrypt certificate via certbot.
+
+    Returns True if certs/cert.pem and certs/key.pem were written. Requires
+    Linux, port 80 reachable from the internet (for the HTTP-01 challenge),
+    and certbot (auto-installed via apt if missing).
+    """
+    if platform.system() != "Linux":
+        return False
+
+    if is_port_in_use(80):
+        print("⚠️  Port 80 is in use, can't run certbot's HTTP-01 challenge — using a self-signed cert instead.")
+        return False
+
+    if not ensure_certbot_installed():
+        print("⚠️  certbot is not available — using a self-signed cert instead.")
+        return False
+
+    CERTS_DIR.mkdir(parents=True, exist_ok=True)
+    run_user = os.environ.get("SUDO_USER") or getpass.getuser()
+
+    hook_path = BASE_DIR / "letsencrypt-deploy-hook.sh"
+    hook_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -e\n"
+        f'cp "/etc/letsencrypt/live/{domain}/fullchain.pem" "{CERT_PATH}"\n'
+        f'cp "/etc/letsencrypt/live/{domain}/privkey.pem" "{KEY_PATH}"\n'
+        f'chown {run_user}:{run_user} "{CERT_PATH}" "{KEY_PATH}"\n'
+    )
+    hook_path.chmod(0o755)
+
+    print(f"🔐 Requesting a Let's Encrypt certificate for {domain}...")
+    try:
+        subprocess.run(
+            [
+                "sudo", "certbot", "certonly", "--standalone", "--non-interactive",
+                "--agree-tos", "--register-unsafely-without-email",
+                "-d", domain, "--http-01-port", "80",
+                "--deploy-hook", str(hook_path),
+            ],
+            check=True, capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f"⚠️  Let's Encrypt issuance failed ({exc}) — using a self-signed cert instead.")
+        return False
+
+    if not CERT_PATH.exists() or not KEY_PATH.exists():
+        print("⚠️  Let's Encrypt cert was issued but couldn't be installed — using a self-signed cert instead.")
+        return False
+
+    print(f"✅ Let's Encrypt certificate installed for {domain} (renews automatically via certbot's timer).")
+    return True
+
+
+def ensure_certs() -> str:
     ip = fetch_public_ip()
     domain = f"{ip}.nip.io"
+
+    if CERT_PATH.exists() and KEY_PATH.exists():
+        return domain
+
+    print("🔐 Generating SSL certificate...")
+    if try_letsencrypt_cert(domain):
+        return domain
+
     generate_self_signed_cert(domain)
-    print("✅ Certificate saved to certs/")
+    print("✅ Self-signed certificate saved to certs/")
     return domain
 
 

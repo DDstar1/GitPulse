@@ -44,7 +44,7 @@ class ProjectCreate(BaseModel):
     path: str
     branch: str = "main"
     restart_command: Optional[str] = None
-    github_webhook_secret: Optional[str] = None
+    github_webhook_secret: str
 
 
 class ProjectUpdate(BaseModel):
@@ -130,6 +130,12 @@ def create_project(
     session: Session = Depends(get_session),
     user: str = Depends(get_current_user),
 ):
+    if not payload.github_webhook_secret.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A GitHub webhook secret is required",
+        )
+
     git_remote = validate_git_path(payload.path)
 
     slug = slugify(payload.name)
@@ -212,6 +218,11 @@ def update_project(
     if payload.restart_command is not None:
         project.restart_command = payload.restart_command
     if payload.github_webhook_secret is not None:
+        if not payload.github_webhook_secret.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A GitHub webhook secret is required",
+            )
         project.github_webhook_secret = payload.github_webhook_secret
 
     session.add(project)

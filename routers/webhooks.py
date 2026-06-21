@@ -76,16 +76,33 @@ async def receive_webhook(slug: str, token: str, request: Request):
 
         body = await request.body()
 
-        if project.github_webhook_secret:
-            signature_header = request.headers.get("X-Hub-Signature-256", "")
-            if not signature_header.startswith("sha256="):
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing signature")
+        signature_header = request.headers.get("X-Hub-Signature-256", "")
+        signature_error = None
+        if not project.github_webhook_secret:
+            signature_error = "No webhook secret configured for this project"
+        elif not signature_header.startswith("sha256="):
+            signature_error = "Missing signature"
+        else:
             expected_signature = hmac.new(
                 project.github_webhook_secret.encode("utf-8"), body, hashlib.sha256
             ).hexdigest()
             provided_signature = signature_header[len("sha256="):]
             if not hmac.compare_digest(expected_signature, provided_signature):
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+                signature_error = "Invalid signature — webhook secret does not match"
+
+        if signature_error:
+            log = DeployLog(
+                project_id=project.id,
+                triggered_at=datetime.utcnow(),
+                trigger_type="webhook",
+                git_pull_output=signature_error,
+                git_pull_status="failed",
+                restart_status="skipped",
+                overall_status="failed",
+            )
+            session.add(log)
+            session.commit()
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=signature_error)
 
         try:
             payload = await request.json()
